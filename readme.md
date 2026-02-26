@@ -2,7 +2,7 @@
 
 A 2D simulation comparing two variants of the **Artificial Potential Fields (APF)** path-planning algorithm in environments with **moving rectangular obstacles**. The robot navigates from a fixed start position to a goal, reacting in real time to obstacle positions (and, in the second variant, to their velocities).
 
-![demo](demo.gif)
+![demo](risultato.gif)
 > *Replace `demo.gif` with your own recorded output (see [Saving a GIF](#saving-a-gif)).*
 
 ---
@@ -193,7 +193,7 @@ The GIF is saved in the current working directory. Rendering may take a minute o
 .
 ├── apf_simulation.py   # Main simulation script
 ├── README.md           # This file
-└── demo.gif            # (optional) example animation for the README
+└── risultato.gif       # example animation in this repository
 ```
 
 ---
