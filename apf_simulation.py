@@ -129,32 +129,85 @@ def repulsive_force_velocity(pos, robot_vel, obstacles):
         total   += factor * mag * diff / dist
     return total
 
+# ─── Escape da minimi locali ─────────────────────────────────────────────────
+# Se il robot e' fermo (o quasi) per STUCK_PATIENCE step consecutivi,
+# si attiva una "escape perturbation" che dura ESCAPE_DURATION step.
+# Durante l'escape, la forza repulsiva e' scalata di ESCAPE_REP_SCALE
+# (< 1 => meno paura degli ostacoli) e viene aggiunta una spinta laterale
+# casuale per uscire dal minimo locale, mantenendo pero' la direzione
+# generale verso il goal.
+
+STUCK_SPEED_THR  = 0.08   # velocita' media sotto cui il robot e' considerato bloccato
+STUCK_PATIENCE   = 40     # step consecutivi lenti prima di attivare escape
+ESCAPE_DURATION  = 60     # step durante cui l'escape e' attivo
+ESCAPE_REP_SCALE = 0.25   # fattore di riduzione della forza repulsiva durante escape
+ESCAPE_PERTURB   = 1.8    # ampiezza della spinta laterale casuale
+
 # ─── Simulazione ─────────────────────────────────────────────────────────────
-def simulate(obstacles, mode='standard'):
+def simulate(obstacles, mode='standard', rng_escape=None):
     """
     Simula usando una lista di ostacoli GIA' CREATA.
     Gli ostacoli vengono resettati alla posizione iniziale prima della simulazione.
-    Restituisce path e obs_history con lo stesso numero di ostacoli garantito.
+    Restituisce path, obs_history e escape_log (lista di step in cui era attivo escape).
     """
-    # reset ostacoli alla posizione/velocita' iniziale
+    if rng_escape is None:
+        rng_escape = np.random.default_rng()
+
     for obs in obstacles:
         obs.reset()
 
     pos  = START.copy().astype(float)
     vel  = np.zeros(2)
     path = [pos.copy()]
-    # salva (cx, cy, vx, vy) per poter aggiornare correttamente le patch
     obs_history = [[(o.cx, o.cy) for o in obstacles]]
 
-    for _ in range(MAX_STEPS):
+    stuck_counter  = 0          # step consecutivi con bassa velocita'
+    escape_counter = 0          # step rimanenti di escape attivo
+    escape_dir     = np.zeros(2)# direzione laterale di perturbazione fissa per tutto l'escape
+    escape_log     = []         # step in cui escape e' stato attivo (per visualizzazione)
+
+    for step in range(MAX_STEPS):
+        # ── forze base ──────────────────────────────────────────────────────
         f_att = attractive_force(pos, GOAL)
         if mode == 'standard':
             f_rep = repulsive_force_standard(pos, obstacles)
         else:
             f_rep = repulsive_force_velocity(pos, vel, obstacles)
 
-        f_total = f_att + f_rep
-        spd     = np.linalg.norm(f_total)
+        # ── logica escape ────────────────────────────────────────────────────
+        spd_now = np.linalg.norm(vel)
+        if escape_counter > 0:
+            # escape attivo: riduci repulsione e aggiungi spinta laterale verso goal
+            f_rep    = f_rep * ESCAPE_REP_SCALE
+            f_total  = f_att + f_rep + escape_dir * ESCAPE_PERTURB
+            escape_counter -= 1
+            escape_log.append(step)
+            stuck_counter = 0
+        else:
+            f_total = f_att + f_rep
+            # controlla se il robot e' bloccato
+            if spd_now < STUCK_SPEED_THR:
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+
+            if stuck_counter >= STUCK_PATIENCE:
+                # attiva escape: calcola una direzione laterale rispetto al goal
+                to_goal  = GOAL - pos
+                to_goal  = to_goal / (np.linalg.norm(to_goal) + 1e-9)
+                perp     = np.array([-to_goal[1], to_goal[0]])  # perpendicolare
+                # scegli il verso (+/-) che allontana di piu' dagli ostacoli vicini
+                f_rep_dir = f_rep / (np.linalg.norm(f_rep) + 1e-9)
+                sign      = 1.0 if np.dot(perp, f_rep_dir) >= 0 else -1.0
+                # aggiungi piccolo rumore per evitare oscillazioni simmetriche
+                noise        = rng_escape.uniform(-0.3, 0.3, size=2)
+                escape_dir   = sign * perp + noise
+                escape_dir  /= np.linalg.norm(escape_dir) + 1e-9
+                escape_counter = ESCAPE_DURATION
+                stuck_counter  = 0
+
+        # ── aggiorna posizione ───────────────────────────────────────────────
+        spd = np.linalg.norm(f_total)
         if spd > MAX_SPEED:
             f_total = f_total / spd * MAX_SPEED
 
@@ -169,7 +222,7 @@ def simulate(obstacles, mode='standard'):
         if np.linalg.norm(pos - GOAL) < D_GOAL:
             break
 
-    return np.array(path), obs_history
+    return np.array(path), obs_history, escape_log
 
 # ─── Animazione ──────────────────────────────────────────────────────────────
 def run_animation(seed=None, gif_path=None):
@@ -186,13 +239,18 @@ def run_animation(seed=None, gif_path=None):
         stato = "FERMO" if (o.vx0==0 and o.vy0==0) else f"vel=({o.vx0:.2f},{o.vy0:.2f})"
         print(f"  O{i+1}: pos=({o.cx0:.1f},{o.cy0:.1f})  {o.w:.1f}x{o.h:.1f}  {stato}")
 
+    # Seme per l'escape (riproducibile se seed e' dato)
+    rng_escape = np.random.default_rng(None if seed is None else seed + 1000)
+
     # Simula entrambe le modalita' sugli STESSI ostacoli
-    paths, obs_histories = [], []
+    paths, obs_histories, escape_logs = [], [], []
     for m in modes:
-        p, oh = simulate(obstacles, mode=m)
+        p, oh, esc = simulate(obstacles, mode=m, rng_escape=rng_escape)
         paths.append(p)
         obs_histories.append(oh)
-        print(f"  [{m}] {len(p)} step  |  fine pos={p[-1].round(2)}")
+        escape_logs.append(set(esc))
+        n_esc = len(esc)
+        print(f"  [{m}] {len(p)} step  |  escape attivati: {n_esc}  |  fine pos={p[-1].round(2)}")
 
     # ── Figura ──
     fig = plt.figure(figsize=(15, 7.5), facecolor='#0d1117')
@@ -233,27 +291,71 @@ def run_animation(seed=None, gif_path=None):
         info   = ax.text(0.02, 0.02, '', transform=ax.transAxes, color='white',
                          fontsize=8, va='bottom',
                          bbox=dict(boxstyle='round', facecolor='#111', alpha=0.75))
-        ax.text(0.98, 0.02, '\u25a0 fermo  \u25b6 mobile',
+        ax.text(0.98, 0.02,
+                '\u25a0 stationary  \u25b6 moving\n\u26a1 escape active (yellow)',
                 transform=ax.transAxes, color='#aaa', fontsize=7, ha='right', va='bottom',
                 bbox=dict(boxstyle='round', facecolor='#111', alpha=0.6))
 
+        # linea escape separata (colorata diversamente)
+        escape_trail, = ax.plot([], [], '-', color='#ffdd00', lw=2.5,
+                                alpha=0.85, zorder=6)
+        escape_dot,   = ax.plot([], [], 's', color='#ffdd00', ms=7, zorder=11)
+
+        # badge "ESCAPE" (visibile solo quando attivo)
+        esc_badge = ax.text(0.5, 0.93, '⚡ ESCAPE ACTIVE',
+                            transform=ax.transAxes, color='#ffdd00',
+                            fontsize=10, fontweight='bold', ha='center',
+                            bbox=dict(boxstyle='round', facecolor='#333', alpha=0.85),
+                            visible=False, zorder=20)
+
         panels.append((trail, robot, obs_patches, obs_labels, info,
-                        paths[i], obs_histories[i]))
+                        escape_trail, escape_dot, esc_badge,
+                        paths[i], obs_histories[i], escape_logs[i]))
 
     plt.tight_layout(rect=[0, 0, 1, 0.94])
     max_frames = max(len(p) for p in paths)
 
     def update(frame):
         artists = []
-        for (trail, robot, obs_patches, obs_labels, info, path, obs_hist) in panels:
+        for (trail, robot, obs_patches, obs_labels, info,
+             escape_trail, escape_dot, esc_badge,
+             path, obs_hist, escape_set) in panels:
+
             f    = min(frame, len(path) - 1)
             oh_f = min(frame, len(obs_hist) - 1)
 
             px, py = path[f]
-            trail.set_data(path[:f+1, 0], path[:f+1, 1])
-            robot.set_data([px], [py])
 
-            centers = obs_hist[oh_f]   # lista di (cx,cy) lunga n_obs
+            # ── trail normale (tratti NON in escape) ──────────────────────
+            norm_x, norm_y = [], []
+            esc_x,  esc_y  = [], []
+            for k in range(f + 1):
+                if k in escape_set:
+                    esc_x.append(path[k, 0]);  esc_y.append(path[k, 1])
+                    # interrompi trail normale
+                    norm_x.append(np.nan);      norm_y.append(np.nan)
+                else:
+                    norm_x.append(path[k, 0]); norm_y.append(path[k, 1])
+                    esc_x.append(np.nan);       esc_y.append(np.nan)
+
+            trail.set_data(norm_x, norm_y)
+            escape_trail.set_data(esc_x, esc_y)
+
+            # ── robot marker: giallo se in escape, normale altrimenti ─────
+            in_escape_now = f in escape_set
+            robot.set_data([px], [py])
+            if in_escape_now:
+                escape_dot.set_data([px], [py])
+                escape_dot.set_visible(True)
+                robot.set_visible(False)
+            else:
+                escape_dot.set_visible(False)
+                robot.set_visible(True)
+
+            esc_badge.set_visible(in_escape_now)
+
+            # ── ostacoli ──────────────────────────────────────────────────
+            centers = obs_hist[oh_f]
             for j, (patch, lbl, obs) in enumerate(zip(obs_patches, obs_labels, obstacles)):
                 cx, cy = centers[j]
                 patch.set_xy((cx - obs.w/2, cy - obs.h/2))
@@ -262,7 +364,8 @@ def run_animation(seed=None, gif_path=None):
             d  = np.linalg.norm(path[f] - GOAL)
             st = "ARRIVATO!" if d < D_GOAL * 3 else f"dist goal: {d:.2f}"
             info.set_text(f"step {f}/{len(path)-1}  {st}")
-            artists += [trail, robot, info] + obs_patches + obs_labels
+            artists += [trail, robot, escape_trail, escape_dot,
+                        esc_badge, info] + obs_patches + obs_labels
         return artists
 
     ani = FuncAnimation(fig, update, frames=max_frames,
