@@ -2,7 +2,7 @@
 
 A 2D simulation comparing two variants of the **Artificial Potential Fields (APF)** path-planning algorithm in environments with **moving rectangular obstacles**. The robot navigates from a fixed start position to a goal, reacting in real time to obstacle positions (and, in the second variant, to their velocities). A built-in **local minimum escape mechanism** prevents the robot from getting permanently stuck.
 
-![demo](risultato.gif)
+![demo](apf_result.gif)
 
 
 ---
@@ -63,6 +63,20 @@ where `d` is the distance from the robot to the closest point on the obstacle.
 
 The total force drives the robot at each time step with a capped speed `MAX_SPEED`.
 
+The attractive force uses a **position-dependent hybrid potential** (parabolic near the goal, conic far away):
+
+```
+if dist < D_ATT_THRESHOLD:
+    F_att = K_att * dist * d_hat       # parabolic zone: force ∝ distance
+else:
+    F_att = K_att * D_ATT_THRESHOLD * d_hat   # conic zone: constant force
+```
+
+This means:
+- **Far from the goal** (dist ≥ `D_ATT_THRESHOLD`): the attractive force is constant, always pulling the robot with full strength.
+- **Near the goal** (dist < `D_ATT_THRESHOLD`): the force decreases linearly with distance, giving a smooth, low-overshoot approach.
+- The two zones meet continuously at `dist = D_ATT_THRESHOLD`, avoiding any discontinuity.
+
 ### Velocity-Aware APF
 
 The repulsive force is multiplied by a dynamic factor that depends on the **approach component** of the relative velocity between the obstacle and the robot:
@@ -106,6 +120,8 @@ F_total = F_att + ESCAPE_REP_SCALE * F_rep + ESCAPE_PERTURB * escape_dir
 After the escape phase ends the robot returns to normal APF behaviour. If it gets stuck again the process repeats.
 
 **Visualisation.** During an active escape the robot's trail turns **yellow** and a ⚡ `ESCAPE ACTIVE` badge appears at the top of the panel.
+
+![demo](apf_result_escape.gif)
 
 > **Tip:** to reliably observe an escape event, run with `--seed 24`.
 
@@ -210,6 +226,7 @@ All tunable parameters are at the top of `apf_simulation.py`:
 | `D_GOAL` | 0.3 | Goal-reached threshold |
 | `MAX_SPEED` | 2.0 | Robot maximum speed |
 | `MAX_STEPS` | 2000 | Maximum simulation steps per run |
+| `D_ATT_THRESHOLD` | 5.0 | Distance threshold between parabolic and conic attractive potential |
 
 ### Escape mechanism
 
@@ -246,9 +263,10 @@ The GIF is saved in the current working directory. Rendering may take a minute o
 
 ```
 .
-├── apf_simulation.py   # Main simulation script
-├── README.md           # This file
-└── risultato.gif       # Example result
+├── apf_simulation.py       # Main simulation script
+├── README.md               # This file
+└── apf_result.gif          # Result example
+└── apf_result_escape.gif   # Result example (Local minima escape case)
 ```
 
 ---

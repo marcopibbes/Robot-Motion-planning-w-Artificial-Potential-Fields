@@ -93,12 +93,31 @@ def make_obstacles(seed=None):
     return obstacles
 
 # ─── APF Core ────────────────────────────────────────────────────────────────
+# Soglia entro cui il potenziale attrattivo e' parabolico (proporzionale a d).
+# Oltre questa soglia diventa conico (forza costante = K_ATT * D_ATT_THRESHOLD).
+# Cio' evita forze enormi lontano dal goal (instabilita') e forze nulle vicino
+# (convergenza lenta), ed e' lo schema standard nella letteratura APF.
+D_ATT_THRESHOLD = 5.0   # [unita' mondo] soglia parabola/cono
+
 def attractive_force(pos, goal):
+    """
+    Potenziale attrattivo ibrido (posizione-dipendente):
+      dist < D_ATT_THRESHOLD  ->  forza lineare in dist  (parabolico, morbido)
+      dist >= D_ATT_THRESHOLD ->  forza costante K_ATT   (conico, spinge sempre)
+    Quando l'agente e' lontano dal goal riceve una forza piena;
+    quando si avvicina la forza decresce proporzionalmente, evitando overshooting.
+    """
     diff = goal - pos
     dist = np.linalg.norm(diff)
     if dist < 1e-6:
         return np.zeros(2)
-    return K_ATT * diff / dist
+    d_hat = diff / dist
+    if dist < D_ATT_THRESHOLD:
+        # zona parabolica: forza proporzionale alla distanza
+        return K_ATT * dist * d_hat
+    else:
+        # zona conica: forza costante (uguale al valore al confine per continuita')
+        return K_ATT * D_ATT_THRESHOLD * d_hat
 
 def repulsive_force_standard(pos, obstacles):
     total = np.zeros(2)
