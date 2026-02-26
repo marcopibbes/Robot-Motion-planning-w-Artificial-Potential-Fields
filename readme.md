@@ -1,9 +1,8 @@
 # APF with Moving Obstacles — Standard vs. Velocity-Aware
 
-A 2D simulation comparing two variants of the **Artificial Potential Fields (APF)** path-planning algorithm in environments with **moving rectangular obstacles**. The robot navigates from a fixed start position to a goal, reacting in real time to obstacle positions (and, in the second variant, to their velocities). A built-in **local minimum escape mechanism** prevents the robot from getting permanently stuck.
+A 2D simulation comparing two variants of the **Artificial Potential Fields (APF)** path-planning algorithm in environments with **moving rectangular obstacles**. The robot navigates from a fixed start position to a goal, reacting in real time to obstacle positions (and, in the second variant, to their velocities). Two safety mechanisms handle failure modes: a **local minimum escape** prevents permanent stalls, and an **emergency mode** guarantees collision avoidance when an obstacle comes dangerously close.
 
 ![demo](apf_result.gif)
-
 
 ---
 
@@ -14,6 +13,7 @@ A 2D simulation comparing two variants of the **Artificial Potential Fields (APF
   - [Standard APF](#standard-apf)
   - [Velocity-Aware APF](#velocity-aware-apf)
   - [Local Minimum Escape](#local-minimum-escape)
+  - [Emergency Mode](#emergency-mode)
 - [Environment](#environment)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -108,6 +108,8 @@ This simulation includes an automatic escape mechanism that detects stalls and a
 2. **Lateral push** — a perturbation is added perpendicular to the goal direction. The sign (+/−) is chosen to point away from the region of strongest repulsion, so the robot sidesteps rather than ramming into the obstacle.
 3. **Random noise** — a small random component is added to the lateral direction to break symmetry and avoid the robot oscillating back into the same minimum.
 
+![demo](apf_result_escape.gif)
+
 ```
 to_goal    = (goal - pos) / ||goal - pos||
 perp       = [-to_goal_y, to_goal_x]           # 90° rotation
@@ -121,9 +123,41 @@ After the escape phase ends the robot returns to normal APF behaviour. If it get
 
 **Visualisation.** During an active escape the robot's trail turns **yellow** and a ⚡ `ESCAPE ACTIVE` badge appears at the top of the panel.
 
-![demo](apf_result_escape.gif)
 
-> **Tip:** to reliably observe an escape event, run with `--seed 24`.
+
+### Emergency Mode
+
+A separate, higher-priority mechanism handles the case where the attractive and repulsive forces are in direct conflict and the robot risks a **collision** — for example when an obstacle moves into the robot from behind, or when the robot is squeezed between the goal direction and an obstacle.
+
+**Trigger.** At every step the simulation measures the distance from the robot to the closest point on the surface of every obstacle. If that distance falls below `D_EMERGENCY`, the emergency mode activates immediately, overriding both normal APF and the escape mechanism.
+
+**Behaviour.** While in emergency mode the robot **completely ignores the goal** and instead runs a real-time **multi-step lookahead** to find the safest escape direction:
+
+1. Sample `N = 24` candidate directions uniformly around 360°.
+2. For each direction, simulate `n_steps = 6` time steps forward, advancing obstacle positions to anticipate their movement.
+3. Measure the minimum distance to all obstacles **and** world borders along the simulated trajectory (worst-case safety score).
+4. Move at `MAX_SPEED` in the direction with the highest worst-case score.
+
+```
+for each of N directions:
+    score = min distance to obstacles+borders over next n_steps
+flee in argmax(score) at MAX_SPEED
+```
+
+Because the robot always moves at maximum speed and obstacle speed is capped at `MAX_SPEED × 0.7`, the robot is **guaranteed to gain distance** from any obstacle in at least one direction — making collision avoidance provably effective.
+
+**Hysteresis exit.** To avoid rapid on/off oscillation the robot does not exit emergency mode the moment it crosses `D_EMERGENCY` again. It must reach a larger clearance `D_EMERGENCY_CLEAR` from *all* obstacles before returning to normal or escape state.
+
+```
+activate  when:  d_min  ≤  D_EMERGENCY        (1.5)
+deactivate when: d_min  ≥  D_EMERGENCY_CLEAR  (2.2)
+```
+
+**Obstacle speed limit.** For emergency avoidance to be geometrically guaranteed, obstacle speed is capped at `MAX_SPEED × 0.7 = 1.4`. A faster obstacle could outrun the robot even at full speed, making collision unavoidable regardless of strategy.
+
+**Visualisation.** The trail turns **red** during emergency and a `EMERGENCY — goal ignored` badge appears at the top of the panel.
+
+
 
 ---
 
@@ -153,8 +187,8 @@ After the escape phase ends the robot returns to normal APF behaviour. If it get
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+git clone https://github.com/marcopibbes/Robot-Motion-planning-w-Artificial-Potential-Fields.git
+cd Robot-Motion-planning-w-Artificial-Potential-Fields
 
 # Create a virtual environment (optional but recommended)
 python -m venv .venv
@@ -177,23 +211,19 @@ python apf_simulation.py
 python apf_simulation.py --seed 42
 ```
 
-**Observe an escape event** (seed guaranteed to trigger it):
-```bash
-python apf_simulation.py --seed 24
-```
+
 
 The simulation opens an animated window with two panels running simultaneously — **APF Standard** on the left and **APF + Velocity** on the right.
 
 The terminal prints a summary of the generated scenario:
 ```
-Seed = 24  |  5 obstacles
+Seed = 5  |  4 obstacles
   O1: pos=(9.3, 6.1)   2.8x1.9  vel=(1.23, -0.87)
   O2: pos=(13.5, 14.2) 1.5x2.4  vel=(-0.55, 1.10)
   O3: pos=(6.8, 11.7)  2.1x2.1  STATIONARY
-  O4: pos=(4.1, 8.3)   1.8x2.6  vel=(0.91, 0.45)
-  O5: pos=(11.2, 9.5)  2.3x1.4  STATIONARY
-  [standard] 1039 steps  |  escape activated: 60  |  final pos=[17.94 17.71]
-  [velocity]  846 steps  |  escape activated: 60  |  final pos=[17.89 17.74]
+  O4: pos=(11.2, 9.5)  2.3x1.4  vel=(0.45, -1.20)
+  [standard] 442 steps  |  escape: 0  emergency: 60  |  final pos=[17.89 17.73]
+  [velocity] 398 steps  |  escape: 0  emergency: 45  |  final pos=[17.91 17.75]
 ```
 
 ### Legend (in the animation)
@@ -204,9 +234,9 @@ Seed = 24  |  5 obstacles
 | ✦ gold | Goal position |
 | ■ red label | Stationary obstacle |
 | ▶ white label | Moving obstacle |
-| cyan trail | Robot path — Standard APF |
-| orange trail | Robot path — Velocity-Aware APF |
-| **yellow trail + ⚡** | Escape mechanism active |
+| cyan / orange trail | Robot path (Standard / Velocity-Aware) |
+| **yellow trail + ⚡** | Local minimum escape active |
+| **red trail + 🚨** | Emergency mode active — goal ignored |
 
 ---
 
@@ -238,6 +268,15 @@ All tunable parameters are at the top of `apf_simulation.py`:
 | `ESCAPE_REP_SCALE` | 0.25 | Repulsive force multiplier during escape (0 = ignore obstacles, 1 = normal) |
 | `ESCAPE_PERTURB` | 1.8 | Magnitude of the lateral perturbation force |
 
+
+### Emergency mode
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `D_EMERGENCY` | 0.8 | Distance threshold that triggers emergency mode |
+| `D_EMERGENCY_CLEAR` | 1.5 | Distance from all obstacles required to exit emergency (hysteresis) |
+| `MAX_SPEED` (obs) | `MAX_SPEED × 0.7` | Obstacle speed cap — guarantees robot can always outrun any obstacle |
+
 ---
 
 ## Saving a GIF
@@ -251,8 +290,7 @@ python apf_simulation.py --gif output.gif
 # Save with a reproducible scenario
 python apf_simulation.py --seed 42 --gif apf_seed42.gif
 
-# Save the escape-trigger scenario
-python apf_simulation.py --seed 24 --gif apf_escape.gif
+
 ```
 
 The GIF is saved in the current working directory. Rendering may take a minute or two depending on the number of simulation steps.
@@ -263,10 +301,12 @@ The GIF is saved in the current working directory. Rendering may take a minute o
 
 ```
 .
-├── apf_simulation.py       # Main simulation script
-├── README.md               # This file
-└── apf_result.gif          # Result example
-└── apf_result_escape.gif   # Result example (Local minima escape case)
+├── apf_simulation.py         # Main simulation script
+├── README.md                 # This file
+└── apf_result.gif            # Example GIF of a run
+└── apf_result_escape.gif     # Example GIF of a run with escape from local minima
+└── apf_result_emergency.gif  # Example GIF of a run with emergency mode
+
 ```
 
 ---
