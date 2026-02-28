@@ -149,8 +149,8 @@ Because the robot always moves at maximum speed and obstacle speed is capped at 
 **Hysteresis exit.** To avoid rapid on/off oscillation the robot does not exit emergency mode the moment it crosses `D_EMERGENCY` again. It must reach a larger clearance `D_EMERGENCY_CLEAR` from *all* obstacles before returning to normal or escape state.
 
 ```
-activate  when:  d_min  ≤  D_EMERGENCY        (1.5)
-deactivate when: d_min  ≥  D_EMERGENCY_CLEAR  (2.2)
+activate  when:  d_min  ≤  D_EMERGENCY        
+deactivate when: d_min  ≥  D_EMERGENCY_CLEAR 
 ```
 
 **Obstacle speed limit.** For emergency avoidance to be geometrically guaranteed, obstacle speed is capped at `MAX_SPEED × 0.7 = 1.4`. A faster obstacle could outrun the robot even at full speed, making collision unavoidable regardless of strategy.

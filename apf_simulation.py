@@ -1,18 +1,3 @@
-"""
-APF (Artificial Potential Fields) Simulation with Moving Obstacles
-==================================================================
-Caso 1: APF Standard
-Caso 2: APF + Velocita' Relativa
-
-Feature aggiuntive:
-  - Potenziale attrattivo posizione-dipendente (parabolico/conico)
-  - Escape da minimi locali (spinta laterale + riduzione repulsione)
-  - Modalita' EMERGENCY: se il robot e' troppo vicino a un ostacolo,
-    dimentica temporaneamente il goal e fugge guidato solo dalla repulsione
-
-Esegui con seed fisso:  python apf_simulation.py --seed 42
-Esegui random:          python apf_simulation.py
-"""
 
 import argparse
 import numpy as np
@@ -20,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 
-# ─── Parametri globali ───────────────────────────────────────────────────────
+# Parametri globali 
 WORLD_SIZE  = 20.0
 DT          = 0.05
 K_ATT       = 10
@@ -33,33 +18,24 @@ MAX_STEPS   = 2000
 START = np.array([1.0, 1.0])
 GOAL  = np.array([18.0, 18.0])
 
-# ─── Potenziale attrattivo ────────────────────────────────────────────────────
-D_ATT_THRESHOLD = 5.0   # soglia parabola/cono
+# Potenziale attrattivo
+D_ATT_THRESHOLD = 5.0   
 
-# ─── Escape da minimi locali ──────────────────────────────────────────────────
+# Escape da minimi locali
 STUCK_SPEED_THR  = 0.08
 STUCK_PATIENCE   = 40
 ESCAPE_DURATION  = 60
 ESCAPE_REP_SCALE = 0.25
 ESCAPE_PERTURB   = 1.8
-# NUOVI PARAMETRI PER LOOP DETECTION
-LOOP_WINDOW      = 50    # Quanti step indietro guardare (es. 50 step = 2.5 sec)
+LOOP_WINDOW      = 50    
 LOOP_DIST_THR    = 1   # Se lo spostamento massimo nella finestra è <1m, è in loop
 
 
-# ─── Emergency (collisione imminente) ────────────────────────────────────────
-# Se il robot entra entro D_EMERGENCY da qualsiasi ostacolo, si attiva la
-# modalita' di emergenza: il goal viene ignorato completamente e la forza
-# repulsiva viene amplificata di EMERGENCY_REP_BOOST.
-# Viene aggiunta anche una repulsione dai bordi del mondo per evitare che
-# il robot rimanga intrappolato tra un ostacolo e il bordo.
-# L'emergenza dura finche' il robot non si allontana oltre D_EMERGENCY_CLEAR
-# da TUTTI gli ostacoli (isteresi per evitare on/off rapidi).
+# Emergency (collisione imminente)
 D_EMERGENCY         = 0.8 # distanza di pericolo per attivare emergency
 D_EMERGENCY_CLEAR   = 2.0   # distanza minima da tutti gli ostacoli per uscire
-EMERGENCY_REP_BOOST = 4.0   # (non piu' usato direttamente, mantenuto per compatibilita')
 
-# ─── Ostacolo ────────────────────────────────────────────────────────────────
+# Ostacolo 
 class MovingObstacle:
     def __init__(self, cx, cy, w, h, vx, vy, color='steelblue'):
         self.cx0, self.cy0 = cx, cy
@@ -98,7 +74,7 @@ class MovingObstacle:
             facecolor=self.color, alpha=alpha
         )
 
-# ─── Generazione ostacoli randomizzata ───────────────────────────────────────
+#Generazione ostacoli 
 def make_obstacles(seed=None):
     rng = np.random.default_rng(seed)
     PALETTE = ['#4a90d9','#e07b39','#7bc67e','#c97bd1',
@@ -128,7 +104,7 @@ def make_obstacles(seed=None):
 
     return obstacles
 
-# ─── APF Core ────────────────────────────────────────────────────────────────
+# APF 
 def attractive_force(pos, goal):
    
     diff = goal - pos
@@ -141,10 +117,10 @@ def attractive_force(pos, goal):
     d_hat = diff / dist  # Versore direzione verso il goal
     
     if dist < D_ATT_THRESHOLD:
-        # Zona Quadratica di Huber: la forza diminuisce linearmente man mano che ci si avvicina (frenata dolce)
+        # Zona Quadratica di Huber
         return K_ATT * dist * d_hat
     else:
-        # Zona Lineare di Huber: la forza è "saturata" a un valore massimo costante (velocità di crociera)
+        # Zona Lineare di Huber
         return K_ATT * D_ATT_THRESHOLD * d_hat
 
 def repulsive_force_standard(pos, obstacles):
@@ -177,22 +153,11 @@ def repulsive_force_velocity(pos, robot_vel, obstacles):
     return total
 
 def min_obstacle_dist(pos, obstacles):
-    """Distanza minima dal robot alla superficie di qualsiasi ostacolo."""
+   
     return min(obs.dist_to(*pos) for obs in obstacles) if obstacles else np.inf
 
 def emergency_flee_direction(pos, obstacles, N=24, n_steps=6):
-    """
-    Direzione di fuga ottimale in EMERGENCY.
-
-    Campiona N direzioni uniformi; per ciascuna simula n_steps anticipando
-    il moto degli ostacoli e misura la distanza minima da ostacoli E bordi
-    lungo tutto il tratto. Restituisce il vettore a MAX_SPEED nella direzione
-    con il miglior worst-case (massimizza la distanza minima prevista).
-
-    Grazie al limite di velocita' degli ostacoli (MAX_SPEED * 0.7), il robot
-    che viaggia a MAX_SPEED riesce sempre a guadagnare distanza in almeno
-    una delle N direzioni candidate.
-    """
+  
     best_dir   = None
     best_score = -np.inf
 
@@ -236,7 +201,7 @@ def emergency_flee_direction(pos, obstacles, N=24, n_steps=6):
         best_dir = np.array([1.0, 0.0])
     return best_dir * MAX_SPEED
 
-# ─── Simulazione ─────────────────────────────────────────────────────────────
+# Simulazione
 # Stati del robot
 STATE_NORMAL    = 0
 STATE_ESCAPE    = 1   # minimo locale
@@ -261,7 +226,7 @@ def simulate(obstacles, mode='standard', rng_escape=None):
     path = [pos.copy()]
     obs_history = [[(o.cx, o.cy) for o in obstacles]]
 
-    # ── stato macchina ───────────────────────────────────────────────────────
+    # stato macchina 
     state          = STATE_NORMAL
     stuck_counter  = 0
     escape_counter = 0
@@ -271,17 +236,17 @@ def simulate(obstacles, mode='standard', rng_escape=None):
     last_escape_step = -LOOP_WINDOW # NUOVA VARIABILE
 
     for step in range(MAX_STEPS):
-        # ── forze base ───────────────────────────────────────────────────────
+    
         f_att = attractive_force(pos, GOAL)
         if mode == 'standard':
             f_rep = repulsive_force_standard(pos, obstacles)
         else:
             f_rep = repulsive_force_velocity(pos, vel, obstacles)
 
-        # ── distanza minima dagli ostacoli (usata per emergency) ─────────────
+        # distanza minima dagli ostacoli
         d_min = min_obstacle_dist(pos, obstacles)
 
-        # ── macchina a stati ─────────────────────────────────────────────────
+        # macchina a stati
 
         # EMERGENCY ha priorita' assoluta su tutto il resto
         if d_min <= D_EMERGENCY:
@@ -289,12 +254,10 @@ def simulate(obstacles, mode='standard', rng_escape=None):
 
         if state == STATE_EMERGENCY:
             emerg_log.append(step)
-            # Lookahead multi-step: prova N direzioni discrete, simula n_steps
-            # anticipando il movimento degli ostacoli, sceglie la direzione
-            # che massimizza la distanza minima da ostacoli E bordi.
+
             # Il robot si muove SEMPRE a MAX_SPEED in quella direzione.
             f_total = emergency_flee_direction(pos, obstacles)
-            # uscita dall'emergency solo quando si e' abbastanza lontani (isteresi)
+            # uscita dall'emergency solo quando si e' abbastanza lontani 
             if d_min >= D_EMERGENCY_CLEAR:
                 state = STATE_NORMAL
                 stuck_counter = 0
@@ -318,9 +281,9 @@ def simulate(obstacles, mode='standard', rng_escape=None):
             else:
                 stuck_counter = 0
 
-            # 2. Rilevamento stuck per loop (oscillazioni veloci)
+            # 2. Rilevamento stuck per loop 
             is_looping = False
-            # Controlla solo se è passata un'intera finestra di tempo dall'ultimo escape
+        
             if (step - last_escape_step) >= LOOP_WINDOW and len(path) >= LOOP_WINDOW:
                 recent_pos = np.array(path[-LOOP_WINDOW:])
                 # Calcola la diagonale del bounding box delle posizioni recenti
@@ -328,10 +291,10 @@ def simulate(obstacles, mode='standard', rng_escape=None):
                 if max_spread < LOOP_DIST_THR:
                     is_looping = True
 
-            # Trigger dell'escape: velocità nulla OPPURE in loop
+            # Trigger dell'escape
             if stuck_counter >= STUCK_PATIENCE or is_looping:
                 # transizione a ESCAPE
-                last_escape_step = step  # Registra quando è iniziato l'escape
+                last_escape_step = step 
                 
                 to_goal   = GOAL - pos
                 to_goal  /= np.linalg.norm(to_goal) + 1e-9
@@ -345,7 +308,7 @@ def simulate(obstacles, mode='standard', rng_escape=None):
                 stuck_counter  = 0
                 state = STATE_ESCAPE
 
-        # ── aggiorna posizione ───────────────────────────────────────────────
+        # aggiorna posizione
         spd = np.linalg.norm(f_total)
         if spd > MAX_SPEED:
             f_total = f_total / spd * MAX_SPEED
@@ -363,7 +326,7 @@ def simulate(obstacles, mode='standard', rng_escape=None):
 
     return np.array(path), obs_history, escape_log, emerg_log
 
-# ─── Animazione ──────────────────────────────────────────────────────────────
+# Animazioni
 def run_animation(seed=None, gif_path=None):
     modes  = ['standard', 'velocity']
     titles = ['APF Standard', 'APF + Velocita\' Relativa']
@@ -440,7 +403,7 @@ def run_animation(seed=None, gif_path=None):
                             fontsize=10, fontweight='bold', ha='center',
                             bbox=dict(boxstyle='round', facecolor='#222', alpha=0.85),
                             visible=False, zorder=20)
-        # badge emergency (sopra escape)
+        # badge emergency 
         emg_badge = ax.text(0.5, 0.93, '\u26A0 EMERGENCY — goal ignored',
                             transform=ax.transAxes, color='#ff4444',
                             fontsize=10, fontweight='bold', ha='center',
@@ -477,7 +440,7 @@ def run_animation(seed=None, gif_path=None):
             oh_f = min(frame, len(obs_hist) - 1)
             px, py = path[f]
 
-            # ── trail diviso in tre colori ────────────────────────────────
+           
             norm_x, norm_y = [], []
             esc_x,  esc_y  = [], []
             emg_x,  emg_y  = [], []
@@ -495,7 +458,7 @@ def run_animation(seed=None, gif_path=None):
             escape_trail.set_data(esc_x, esc_y)
             emerg_trail.set_data(emg_x,  emg_y)
 
-            # ── robot marker ──────────────────────────────────────────────
+            # robot markers
             in_emg_now = f in emerg_set
             in_esc_now = f in escape_set and not in_emg_now
 
@@ -512,7 +475,7 @@ def run_animation(seed=None, gif_path=None):
             emg_badge.set_visible(in_emg_now)
             esc_badge.set_visible(in_esc_now and not in_emg_now)
 
-            # ── ostacoli ──────────────────────────────────────────────────
+            # ostacoli
             centers = obs_hist[oh_f]
             for j, (patch, lbl, obs) in enumerate(zip(obs_patches, obs_labels, obstacles)):
                 cx, cy = centers[j]
@@ -543,7 +506,7 @@ def run_animation(seed=None, gif_path=None):
 
     return ani
 
-# ─── Entry point ─────────────────────────────────────────────────────────────
+# main
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='APF con ostacoli randomizzati')
     parser.add_argument('--seed', type=int, default=None,
